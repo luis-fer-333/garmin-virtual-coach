@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.coach.prompt_builder import SYSTEM_PROMPT
 from src.coach.llm_client import LLMClient
+from src.analytics import inject_ga4, track_event
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,10 @@ st.set_page_config(
 )
 
 sns.set_theme(style="darkgrid", palette="deep")
+
+# --- Analytics ---
+GA4_ID = st.secrets.get("GA4_MEASUREMENT_ID", "") if hasattr(st, "secrets") else ""
+inject_ga4(GA4_ID)
 
 
 # ============================================================
@@ -397,6 +402,10 @@ def main():
                             data = fetch_garmin_data(garmin_email, garmin_password, lookback)
                             st.session_state.garmin_data = data
                             st.session_state.garmin_email = garmin_email
+                            track_event(GA4_ID, "garmin_login", {
+                                "lookback_days": str(lookback),
+                                "num_activities": str(len(data.get("all_activities") or [])),
+                            })
                             st.rerun()
                         except Exception as e:
                             if "429" in str(e):
@@ -509,6 +518,7 @@ def main():
             ]
             for col, (label, prompt) in zip(eval_cols, eval_prompts):
                 if col.button(label, use_container_width=True):
+                    track_event(GA4_ID, "suggested_prompt", {"category": "evaluate", "prompt": label})
                     st.session_state.messages.append({"role": "user", "content": prompt})
                     st.rerun()
 
@@ -521,6 +531,7 @@ def main():
             ]
             for col, (label, prompt) in zip(improve_cols, improve_prompts):
                 if col.button(label, use_container_width=True):
+                    track_event(GA4_ID, "suggested_prompt", {"category": "improve", "prompt": label})
                     st.session_state.messages.append({"role": "user", "content": prompt})
                     st.rerun()
 
@@ -533,6 +544,7 @@ def main():
             ]
             for col, (label, prompt) in zip(plan_cols, plan_prompts):
                 if col.button(label, use_container_width=True):
+                    track_event(GA4_ID, "suggested_prompt", {"category": "plan", "prompt": label})
                     st.session_state.messages.append({"role": "user", "content": prompt})
                     st.rerun()
 
@@ -576,11 +588,16 @@ detailed review or plan."""
                         st.session_state.messages.append(
                             {"role": "assistant", "content": response}
                         )
+                        track_event(GA4_ID, "coach_response", {
+                            "message_count": str(len(st.session_state.messages)),
+                            "response_length": str(len(response)),
+                        })
                     except Exception as e:
                         st.error(f"Sorry, I couldn't generate a response: {e}")
 
         # --- Chat input (always visible) ---
         if prompt := st.chat_input("Ask your coach..."):
+            track_event(GA4_ID, "chat_message", {"type": "free_text"})
             st.session_state.messages.append({"role": "user", "content": prompt})
             st.rerun()
 
@@ -593,6 +610,7 @@ detailed review or plan."""
     # ========== DASHBOARD ==========
     with tab_dashboard:
         st.header("Training Dashboard")
+        track_event(GA4_ID, "view_dashboard")
 
         if df_act.empty:
             st.info("No activities found in the last 30 days. Get moving!")
