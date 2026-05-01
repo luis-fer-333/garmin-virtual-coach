@@ -487,33 +487,65 @@ def main():
     # ========== COACH CHAT ==========
     with tab_coach:
         st.header("Talk to your Coach")
-        st.caption("Ask about your training, recovery, sleep, or get a weekly review.")
 
+        # Initialize chat history
         if "messages" not in st.session_state:
-            st.session_state.messages = [
-                {
-                    "role": "assistant",
-                    "content": (
-                        f"Hey {name}! I'm your virtual coach. I can see your "
-                        "Garmin data — activities, sleep, HRV, and daily stats.\n\n"
-                        "Try asking me:\n"
-                        "- *How was my week?*\n"
-                        "- *Analyze my sleep*\n"
-                        "- *Should I train hard today?*\n"
-                        "- *Give me a weekly review*"
-                    ),
-                }
-            ]
+            st.session_state.messages = []
 
+        # --- Suggested prompts (shown when chat is empty) ---
+        if not st.session_state.messages:
+            st.markdown(
+                f"Hey **{name}**! I'm your AI coach. I can see all your Garmin data "
+                "— activities, sleep, HRV, stress, body battery, and more.\n\n"
+                "Pick a topic below or type your own question."
+            )
+
+            st.subheader("🔍 Evaluate")
+            eval_cols = st.columns(3)
+            eval_prompts = [
+                ("📊 Weekly Review", "Give me a detailed weekly training review. Analyze my volume, intensity, recovery, and tell me what went well and what needs attention."),
+                ("🏃 Performance Check", "Evaluate my overall fitness and performance based on all available data. How am I doing? Am I improving or declining?"),
+                ("😴 Sleep Analysis", "Analyze my sleep quality in detail. Look at deep sleep, REM, sleep score, and how it's affecting my recovery and readiness."),
+            ]
+            for col, (label, prompt) in zip(eval_cols, eval_prompts):
+                if col.button(label, use_container_width=True):
+                    st.session_state.messages.append({"role": "user", "content": prompt})
+                    st.rerun()
+
+            st.subheader("💡 Improve")
+            improve_cols = st.columns(3)
+            improve_prompts = [
+                ("🎯 Where to Focus", "Based on my data, what are the top 3 areas I should focus on to improve? Be specific with numbers and actionable steps."),
+                ("⚡ Quick Wins", "What are some quick wins I can implement this week to improve my training, recovery, or overall health? Look at my weakest metrics."),
+                ("🔄 Recovery Tips", "Analyze my recovery metrics (HRV, sleep, stress, body battery) and give me specific tips to recover better."),
+            ]
+            for col, (label, prompt) in zip(improve_cols, improve_prompts):
+                if col.button(label, use_container_width=True):
+                    st.session_state.messages.append({"role": "user", "content": prompt})
+                    st.rerun()
+
+            st.subheader("📋 Custom Plan")
+            plan_cols = st.columns(3)
+            plan_prompts = [
+                ("🗓️ Build My Plan", "I want a custom training plan. Ask me about my goals, available days, current fitness level, and any constraints before creating the plan."),
+                ("🏁 Race Prep", "I'm preparing for a race. Ask me about the race distance, date, and my current fitness, then create a preparation plan."),
+                ("🔥 Get Stronger", "I want to improve my overall fitness. Ask me what sports I do, what my goals are, and how many hours per week I can train, then build a plan."),
+            ]
+            for col, (label, prompt) in zip(plan_cols, plan_prompts):
+                if col.button(label, use_container_width=True):
+                    st.session_state.messages.append({"role": "user", "content": prompt})
+                    st.rerun()
+
+            st.subheader("❓ Ask Anything")
+            st.caption("Or type your own question below — I have access to all your Garmin data.")
+
+        # --- Display chat history ---
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-        if prompt := st.chat_input("Ask your coach..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
+        # --- Generate response for pending user message ---
+        if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
             coach_system = SYSTEM_PROMPT + f"""
 
 You have access to this athlete's current data:
@@ -522,27 +554,41 @@ You have access to this athlete's current data:
 
 Use this data to give specific, personalized advice. Reference actual numbers
 from their data (HR, distances, sleep scores, HRV) in your responses.
-Keep responses conversational and under 300 words unless they ask for a
-detailed review."""
+
+When the user asks you to build a custom plan, DO NOT create it immediately.
+First ask them 3-5 questions to understand their goals, constraints, and
+preferences. Only after they answer, create a detailed plan.
+
+Keep responses conversational and under 400 words unless they ask for a
+detailed review or plan."""
 
             conversation = ""
-            for msg in st.session_state.messages[-6:]:
+            for msg in st.session_state.messages[-8:]:
                 role = "User" if msg["role"] == "user" else "Coach"
                 conversation += f"\n{role}: {msg['content']}"
-
-            full_prompt = conversation + f"\nUser: {prompt}\nCoach:"
 
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     try:
                         llm = LLMClient()
-                        response = llm.generate(coach_system, full_prompt)
+                        response = llm.generate(coach_system, conversation)
                         st.markdown(response)
                         st.session_state.messages.append(
                             {"role": "assistant", "content": response}
                         )
                     except Exception as e:
                         st.error(f"Sorry, I couldn't generate a response: {e}")
+
+        # --- Chat input (always visible) ---
+        if prompt := st.chat_input("Ask your coach..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.rerun()
+
+        # --- Clear chat button ---
+        if st.session_state.messages:
+            if st.button("🗑️ Clear chat", use_container_width=False):
+                st.session_state.messages = []
+                st.rerun()
 
     # ========== DASHBOARD ==========
     with tab_dashboard:
