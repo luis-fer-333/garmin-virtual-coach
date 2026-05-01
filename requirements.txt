@@ -1,0 +1,31 @@
+# Garmin Connect API (install from GitHub for latest auth fix)
+garminconnect @ git+https://github.com/cyberjunky/python-garminconnect.git@master
+
+# Data processing
+pandas>=2.1.0
+numpy>=1.24.0
+
+# LLM — Google Gemini
+google-genai>=1.0.0
+
+# Web app
+streamlit>=1.35.0
+
+# Charts
+matplotlib>=3.8.0
+seaborn>=0.13.0
+
+# Configuration
+python-dotenv>=1.0.0
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+
+# .fit file parsing (offline fallback)
+fitparse>=1.2.0
+
+# API (optional, for REST endpoint)
+fastapi>=0.111.0
+uvicorn>=0.30.0
+
+# Testing
+pytest>=8.2.0

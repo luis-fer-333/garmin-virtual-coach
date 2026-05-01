@@ -1,0 +1,25 @@
+# Environment
+.env
+.venv/
+__pycache__/
+*.pyc
+
+# Data (user-specific, don't commit)
+data/
+*.db
+*.sqlite
+
+# Garmin tokens
+.garminconnect/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Build
+*.egg-info/
+dist/
+build/
