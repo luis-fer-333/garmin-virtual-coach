@@ -44,8 +44,8 @@ sns.set_theme(style="darkgrid", palette="deep")
 # GARMIN DATA FETCHING (live, per-user session)
 # ============================================================
 
-def fetch_garmin_data(email: str, password: str) -> dict:
-    """Connect to Garmin and pull all relevant data for the user."""
+def fetch_garmin_data(email: str, password: str, lookback_days: int = 90) -> dict:
+    """Connect to Garmin and pull all available data for the user."""
     from garminconnect import Garmin
 
     token_dir = str(Path.home() / ".garminconnect" / email.split("@")[0])
@@ -54,47 +54,85 @@ def fetch_garmin_data(email: str, password: str) -> dict:
     api = Garmin(email, password)
     api.login(tokenstore=token_dir)
 
-    today = date.today().isoformat()
-    start = (date.today() - timedelta(days=30)).isoformat()
+    today = date.today()
+    today_str = today.isoformat()
+    start_str = (today - timedelta(days=lookback_days)).isoformat()
 
-    data = {}
+    data = {"fetch_date": today_str, "lookback_days": lookback_days}
 
-    # Activities
-    try:
-        data["all_activities"] = api.get_activities_by_date(start, today)
-    except Exception as e:
-        logger.warning("Activities fetch failed: %s", e)
-        data["all_activities"] = []
+    def safe_fetch(name, func, *args, **kwargs):
+        try:
+            data[name] = func(*args, **kwargs)
+        except Exception as e:
+            logger.warning("%s fetch failed: %s", name, e)
+            data[name] = None
 
-    # Daily stats
-    try:
-        data["daily_stats"] = api.get_stats(today)
-    except Exception as e:
-        logger.warning("Stats fetch failed: %s", e)
-        data["daily_stats"] = {}
+    # --- Profile ---
+    safe_fetch("full_name", api.get_full_name)
+    safe_fetch("user_profile", api.get_user_profile)
+    safe_fetch("device_info", api.get_device_last_used)
 
-    # Sleep
-    try:
-        data["sleep"] = api.get_sleep_data(today)
-    except Exception as e:
-        logger.warning("Sleep fetch failed: %s", e)
-        data["sleep"] = {}
+    # --- Activities (all types, full range) ---
+    safe_fetch("all_activities", api.get_activities_by_date, start_str, today_str)
 
-    # HRV
-    try:
-        data["hrv"] = api.get_hrv_data(today)
-    except Exception as e:
-        logger.warning("HRV fetch failed: %s", e)
-        data["hrv"] = {}
+    # --- Daily stats ---
+    safe_fetch("daily_stats", api.get_stats, today_str)
+    safe_fetch("stats_and_body", api.get_stats_and_body, today_str)
 
-    # Profile name
-    try:
-        data["full_name"] = api.get_full_name()
-    except Exception:
-        data["full_name"] = email.split("@")[0]
+    # --- Heart rate ---
+    safe_fetch("heart_rates", api.get_heart_rates, today_str)
+    safe_fetch("resting_hr", api.get_rhr_day, today_str)
+
+    # --- Sleep ---
+    safe_fetch("sleep", api.get_sleep_data, today_str)
+
+    # --- HRV ---
+    safe_fetch("hrv", api.get_hrv_data, today_str)
+
+    # --- Stress ---
+    safe_fetch("stress", api.get_stress_data, today_str)
+    safe_fetch("all_day_stress", api.get_all_day_stress, today_str)
+
+    # --- Body Battery ---
+    safe_fetch("body_battery", api.get_body_battery, today_str)
+
+    # --- Body composition (weight, BMI, body fat) ---
+    safe_fetch("body_composition", api.get_body_composition, today_str)
+    safe_fetch("weigh_ins", api.get_daily_weigh_ins, today_str)
+
+    # --- Steps ---
+    safe_fetch("steps_data", api.get_steps_data, today_str)
+    safe_fetch("daily_steps", api.get_daily_steps, today_str)
+
+    # --- Respiration ---
+    safe_fetch("respiration", api.get_respiration_data, today_str)
+
+    # --- SpO2 ---
+    safe_fetch("spo2", api.get_spo2_data, today_str)
+
+    # --- Floors ---
+    safe_fetch("floors", api.get_floors, today_str)
+
+    # --- Hydration ---
+    safe_fetch("hydration", api.get_hydration_data, today_str)
+
+    # --- Training metrics ---
+    safe_fetch("training_readiness", api.get_training_readiness, today_str)
+    safe_fetch("training_status", api.get_training_status, today_str)
+    safe_fetch("endurance_score", api.get_endurance_score, today_str)
+    safe_fetch("hill_score", api.get_hill_score, today_str)
+    safe_fetch("max_metrics", api.get_max_metrics, today_str)
+    safe_fetch("race_predictions", api.get_race_predictions)
+    safe_fetch("fitness_age", api.get_fitnessage_data, today_str)
+
+    # --- Intensity minutes ---
+    safe_fetch("intensity_minutes", api.get_intensity_minutes_data, today_str)
+    safe_fetch("weekly_intensity", api.get_weekly_intensity_minutes)
+
+    # --- Personal records ---
+    safe_fetch("personal_records", api.get_personal_record)
 
     return data
-
 
 # ============================================================
 # DATA PROCESSING
@@ -124,8 +162,9 @@ def get_activities_df(data: dict) -> pd.DataFrame:
 def build_athlete_context(data: dict, df_act: pd.DataFrame) -> str:
     sections = []
 
+    # Activities summary
     if not df_act.empty:
-        sections.append("## Recent Activities (last 30 days)")
+        sections.append(f"## Recent Activities (last {data.get('lookback_days', 30)} days)")
         for _, row in df_act.iterrows():
             sections.append(
                 f"- {row['date'].strftime('%b %d')} | {row['sport_label']} | "
@@ -134,32 +173,93 @@ def build_athlete_context(data: dict, df_act: pd.DataFrame) -> str:
                 f"training load {row.get('activityTrainingLoad', 'N/A')}"
             )
 
-    stats = data.get("daily_stats", {})
+    # Daily stats
+    stats = data.get("daily_stats") or {}
     if stats:
         sections.append(f"""## Today's Wellness
-- Resting HR: {stats.get('restingHeartRate', 'N/A')} bpm
-- Body Battery: {stats.get('bodyBatteryMostRecentValue', 'N/A')}/100
-- Stress: avg {stats.get('averageStressLevel', 'N/A')}
-- Steps: {stats.get('totalSteps', 'N/A')}""")
+- Resting HR: {stats.get('restingHeartRate', 'N/A')} bpm (7d avg: {stats.get('lastSevenDaysAvgRestingHeartRate', 'N/A')})
+- Body Battery: {stats.get('bodyBatteryMostRecentValue', 'N/A')}/100 (highest: {stats.get('bodyBatteryHighestValue', 'N/A')}, lowest: {stats.get('bodyBatteryLowestValue', 'N/A')})
+- Stress: avg {stats.get('averageStressLevel', 'N/A')}, max {stats.get('maxStressLevel', 'N/A')}
+- Steps: {stats.get('totalSteps', 'N/A')} / {stats.get('dailyStepGoal', 'N/A')} goal
+- Active calories: {stats.get('activeKilocalories', 'N/A')} kcal
+- Intensity minutes: moderate {stats.get('moderateIntensityMinutes', 'N/A')}, vigorous {stats.get('vigorousIntensityMinutes', 'N/A')}
+- Floors climbed: {stats.get('floorsAscended', 'N/A')}
+- Respiration: avg {stats.get('avgWakingRespirationValue', 'N/A')} breaths/min""")
 
-    sleep = data.get("sleep", {})
+    # Sleep
+    sleep = data.get("sleep") or {}
     if sleep:
         ds = sleep.get("dailySleepDTO", {})
         total_h = round((ds.get("sleepTimeSeconds", 0) or 0) / 3600, 1)
         deep_h = round((ds.get("deepSleepSeconds", 0) or 0) / 3600, 1)
+        light_h = round((ds.get("lightSleepSeconds", 0) or 0) / 3600, 1)
         rem_h = round((ds.get("remSleepSeconds", 0) or 0) / 3600, 1)
+        awake_min = round((ds.get("awakeSleepSeconds", 0) or 0) / 60, 0)
         score = ds.get("sleepScores", {}).get("overall", {}).get("value", "N/A")
         sections.append(f"""## Last Night's Sleep
-- Total: {total_h}h | Deep: {deep_h}h | REM: {rem_h}h
-- Sleep score: {score}/100""")
+- Total: {total_h}h | Deep: {deep_h}h | Light: {light_h}h | REM: {rem_h}h | Awake: {awake_min}min
+- Sleep score: {score}/100
+- Avg stress during sleep: {ds.get('avgSleepStress', 'N/A')}
+- Respiration: avg {ds.get('averageRespirationValue', 'N/A')} breaths/min""")
 
-    hrv = data.get("hrv", {})
+    # HRV
+    hrv = data.get("hrv") or {}
     if hrv:
         summary = hrv.get("hrvSummary", {})
+        baseline = summary.get("baseline", {})
         sections.append(f"""## HRV
 - Last night avg: {summary.get('lastNightAvg', 'N/A')}ms
+- Last night 5-min high: {summary.get('lastNight5MinHigh', 'N/A')}ms
 - Weekly avg: {summary.get('weeklyAvg', 'N/A')}ms
-- Status: {summary.get('status', 'N/A')}""")
+- Status: {summary.get('status', 'N/A')}
+- Balanced range: {baseline.get('balancedLow', 'N/A')}–{baseline.get('balancedUpper', 'N/A')}ms""")
+
+    # Training readiness
+    readiness = data.get("training_readiness")
+    if readiness and isinstance(readiness, dict):
+        sections.append(f"""## Training Readiness
+- Score: {readiness.get('score', 'N/A')}
+- Level: {readiness.get('level', 'N/A')}""")
+
+    # Training status
+    tstatus = data.get("training_status")
+    if tstatus and isinstance(tstatus, dict):
+        sections.append(f"""## Training Status
+- VO2max: {tstatus.get('vo2MaxValue', 'N/A')}
+- Training load (7d): {tstatus.get('trainingLoad7Day', 'N/A')}
+- Training load balance: {tstatus.get('trainingLoadBalance', 'N/A')}""")
+
+    # Race predictions
+    preds = data.get("race_predictions")
+    if preds and isinstance(preds, list) and len(preds) > 0:
+        sections.append("## Race Predictions")
+        for p in preds:
+            dist = p.get("raceName", p.get("raceDistanceKey", "?"))
+            time_sec = p.get("predictedTime", 0)
+            if time_sec:
+                mins = int(time_sec // 60)
+                secs = int(time_sec % 60)
+                sections.append(f"- {dist}: {mins}:{secs:02d}")
+
+    # Fitness age
+    fitage = data.get("fitness_age")
+    if fitage and isinstance(fitage, dict):
+        sections.append(f"## Fitness Age: {fitage.get('fitnessAge', 'N/A')} (chronological: {fitage.get('chronologicalAge', 'N/A')})")
+
+    # Body composition
+    body = data.get("body_composition")
+    if body and isinstance(body, dict):
+        sections.append(f"""## Body Composition
+- Weight: {body.get('weight', 'N/A')} kg
+- BMI: {body.get('bmi', 'N/A')}
+- Body fat: {body.get('bodyFat', 'N/A')}%""")
+
+    # Personal records
+    records = data.get("personal_records")
+    if records and isinstance(records, list) and len(records) > 0:
+        sections.append("## Personal Records")
+        for r in records[:5]:
+            sections.append(f"- {r.get('typeKey', '?')}: {r.get('value', 'N/A')}")
 
     return "\n\n".join(sections)
 
@@ -215,7 +315,10 @@ def chart_training_load(df_act):
 
 
 def chart_sleep(data):
-    ds = data.get("sleep", {}).get("dailySleepDTO", {})
+    sleep = data.get("sleep")
+    if not sleep or not isinstance(sleep, dict):
+        return None
+    ds = sleep.get("dailySleepDTO", {})
     if not ds:
         return None
     stages = {
@@ -238,7 +341,9 @@ def chart_sleep(data):
 
 
 def chart_hrv(data):
-    hrv = data.get("hrv", {})
+    hrv = data.get("hrv")
+    if not hrv or not isinstance(hrv, dict):
+        return None
     readings = pd.DataFrame(hrv.get("hrvReadings", []))
     if readings.empty:
         return None
@@ -281,14 +386,15 @@ def main():
 
             garmin_email = st.text_input("Garmin Email", placeholder="you@email.com")
             garmin_password = st.text_input("Garmin Password", type="password")
+            lookback = st.slider("Days of history", 7, 365, 90, step=7)
 
             if st.button("Connect", type="primary", use_container_width=True):
                 if not garmin_email or not garmin_password:
                     st.error("Please enter both email and password")
                 else:
-                    with st.spinner("Connecting to Garmin..."):
+                    with st.spinner("Connecting to Garmin (fetching all data)..."):
                         try:
-                            data = fetch_garmin_data(garmin_email, garmin_password)
+                            data = fetch_garmin_data(garmin_email, garmin_password, lookback)
                             st.session_state.garmin_data = data
                             st.session_state.garmin_email = garmin_email
                             st.rerun()
@@ -337,7 +443,7 @@ def main():
         st.divider()
 
         # Quick stats
-        stats = data.get("daily_stats", {})
+        stats = data.get("daily_stats") or {}
         if stats:
             col1, col2 = st.columns(2)
             col1.metric("Resting HR", f"{stats.get('restingHeartRate', '—')} bpm")
@@ -346,16 +452,30 @@ def main():
             col1.metric("Stress", f"{stats.get('averageStressLevel', '—')}")
             col2.metric("Steps", f"{stats.get('totalSteps', 0):,}")
 
-        hrv_summary = data.get("hrv", {}).get("hrvSummary", {})
+        hrv_summary = data.get("hrv", {}).get("hrvSummary", {}) if data.get("hrv") else {}
         if hrv_summary:
             st.metric("HRV", f"{hrv_summary.get('lastNightAvg', '—')}ms "
                        f"({hrv_summary.get('status', '')})")
 
-        sleep_ds = data.get("sleep", {}).get("dailySleepDTO", {})
+        sleep_ds = data.get("sleep", {}).get("dailySleepDTO", {}) if data.get("sleep") else {}
         if sleep_ds:
             score = sleep_ds.get("sleepScores", {}).get("overall", {}).get("value", "—")
             total_h = round((sleep_ds.get("sleepTimeSeconds", 0) or 0) / 3600, 1)
             st.metric("Sleep", f"{total_h}h (score: {score})")
+
+        # Training readiness
+        readiness = data.get("training_readiness")
+        if readiness and isinstance(readiness, dict) and readiness.get("score"):
+            st.metric("Training Readiness", f"{readiness['score']}")
+
+        # Fitness age
+        fitage = data.get("fitness_age")
+        if fitage and isinstance(fitage, dict) and fitage.get("fitnessAge"):
+            st.metric("Fitness Age", f"{fitage['fitnessAge']}")
+
+        st.divider()
+        n_activities = len(data.get("all_activities") or [])
+        st.caption(f"Activities: {n_activities} | Last {data.get('lookback_days', 30)} days")
 
     # --- Process data ---
     df_act = get_activities_df(data)
