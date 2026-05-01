@@ -1,31 +1,49 @@
 """Google Analytics 4 integration for Streamlit.
 
-Injects GA4 directly into the page HTML (not an iframe) so Google
-can detect the tag and events fire on the main window.
+Uses st.components.v1.html to inject GA4 into the parent window
+(not the iframe), which is the only reliable way to run JS in Streamlit.
 """
 
-import streamlit as st
+import streamlit.components.v1 as components
 
 
 def inject_ga4(measurement_id: str) -> None:
-    """Inject Google Analytics 4 tracking into the Streamlit page head."""
+    """Inject GA4 tracking script that targets the parent Streamlit window."""
     if not measurement_id:
         return
 
-    st.markdown(
+    components.html(
         f"""
-        <!-- Google Analytics 4 -->
-        <script async src="https://www.googletagmanager.com/gtag/js?id={measurement_id}"></script>
         <script>
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){{dataLayer.push(arguments);}}
-            gtag('js', new Date());
-            gtag('config', '{measurement_id}', {{
-                send_page_view: true
-            }});
+            // Inject gtag.js into the PARENT window (Streamlit's main page)
+            const parent = window.parent.document;
+
+            // Only inject once
+            if (!parent.getElementById('ga4-gtag')) {{
+                const gtagScript = parent.createElement('script');
+                gtagScript.id = 'ga4-gtag';
+                gtagScript.async = true;
+                gtagScript.src = 'https://www.googletagmanager.com/gtag/js?id={measurement_id}';
+                parent.head.appendChild(gtagScript);
+
+                const inlineScript = parent.createElement('script');
+                inlineScript.id = 'ga4-config';
+                inlineScript.textContent = `
+                    window.dataLayer = window.dataLayer || [];
+                    function gtag(){{dataLayer.push(arguments);}}
+                    gtag('js', new Date());
+                    gtag('config', '{measurement_id}', {{
+                        send_page_view: true,
+                        page_location: window.location.href,
+                        page_title: document.title
+                    }});
+                `;
+                parent.head.appendChild(inlineScript);
+            }}
         </script>
         """,
-        unsafe_allow_html=True,
+        height=0,
+        width=0,
     )
 
 
@@ -34,20 +52,21 @@ def track_event(
     event_name: str,
     params: dict = None,
 ) -> None:
-    """Send a custom GA4 event via inline script."""
+    """Fire a custom GA4 event on the parent window."""
     if not measurement_id:
         return
 
     params = params or {}
     params_js = ", ".join(f"'{k}': '{v}'" for k, v in params.items())
 
-    st.markdown(
+    components.html(
         f"""
         <script>
-            if (typeof gtag !== 'undefined') {{
-                gtag('event', '{event_name}', {{{params_js}}});
+            if (window.parent && window.parent.gtag) {{
+                window.parent.gtag('event', '{event_name}', {{{params_js}}});
             }}
         </script>
         """,
-        unsafe_allow_html=True,
+        height=0,
+        width=0,
     )
