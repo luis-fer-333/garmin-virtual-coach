@@ -1,7 +1,28 @@
-"""Centralized configuration using pydantic-settings."""
+"""Centralized configuration.
+
+Loads from (in priority order):
+1. Streamlit secrets (st.secrets) — for Streamlit Cloud deployment
+2. Environment variables / .env file — for local development
+"""
+
+import os
 
 from pydantic_settings import BaseSettings
 from pydantic import Field
+
+
+def _load_streamlit_secrets():
+    """Push Streamlit secrets into env vars so pydantic picks them up."""
+    try:
+        import streamlit as st
+        for key, value in st.secrets.items():
+            os.environ.setdefault(key.upper(), str(value))
+    except Exception:
+        pass  # Not running in Streamlit, or no secrets configured
+
+
+# Load Streamlit secrets before pydantic reads env vars
+_load_streamlit_secrets()
 
 
 class Settings(BaseSettings):
@@ -17,12 +38,17 @@ class Settings(BaseSettings):
 
     # LLM
     llm_provider: str = Field(
-        default="gemini", description="LLM provider: 'gemini', 'groq', 'openai', or 'bedrock'"
+        default="groq",
+        description="LLM provider: 'groq', 'gemini', 'openai', or 'bedrock'",
+    )
+    groq_api_key: str = Field(default="", description="Groq API key")
+    groq_model: str = Field(
+        default="llama-3.3-70b-versatile", description="Groq model name"
     )
     gemini_api_key: str = Field(default="", description="Google Gemini API key")
-    gemini_model: str = Field(default="gemini-2.0-flash", description="Gemini model name")
-    groq_api_key: str = Field(default="", description="Groq API key")
-    groq_model: str = Field(default="llama-3.1-70b-versatile", description="Groq model name")
+    gemini_model: str = Field(
+        default="gemini-2.0-flash", description="Gemini model name"
+    )
     openai_api_key: str = Field(default="", description="OpenAI API key")
     openai_model: str = Field(default="gpt-4o", description="OpenAI model name")
     aws_region: str = Field(default="eu-west-1", description="AWS region for Bedrock")
