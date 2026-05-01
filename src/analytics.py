@@ -1,21 +1,19 @@
 """Google Analytics 4 integration for Streamlit.
 
-Injects the GA4 gtag.js script and provides event tracking helpers.
+Injects GA4 directly into the page HTML (not an iframe) so Google
+can detect the tag and events fire on the main window.
 """
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 
 def inject_ga4(measurement_id: str) -> None:
-    """Inject Google Analytics 4 tracking script into the Streamlit app.
-
-    Must be called once at the top of the app, before any other content.
-    """
+    """Inject Google Analytics 4 tracking into the Streamlit page head."""
     if not measurement_id:
         return
 
-    ga_script = f"""
+    st.markdown(
+        f"""
         <!-- Google Analytics 4 -->
         <script async src="https://www.googletagmanager.com/gtag/js?id={measurement_id}"></script>
         <script>
@@ -23,18 +21,12 @@ def inject_ga4(measurement_id: str) -> None:
             function gtag(){{dataLayer.push(arguments);}}
             gtag('js', new Date());
             gtag('config', '{measurement_id}', {{
-                'send_page_view': true,
-                'cookie_flags': 'SameSite=None;Secure'
-            }});
-
-            // Custom dimensions for Streamlit
-            gtag('set', 'user_properties', {{
-                'app_name': 'garmin_virtual_coach',
-                'app_version': '1.0.0'
+                send_page_view: true
             }});
         </script>
-    """
-    components.html(ga_script, height=0, width=0)
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def track_event(
@@ -42,24 +34,20 @@ def track_event(
     event_name: str,
     params: dict = None,
 ) -> None:
-    """Send a custom GA4 event.
-
-    Args:
-        measurement_id: GA4 measurement ID (G-XXXXXXXXXX).
-        event_name: Event name (e.g., 'garmin_login', 'coach_chat').
-        params: Optional dict of event parameters.
-    """
+    """Send a custom GA4 event via inline script."""
     if not measurement_id:
         return
 
     params = params or {}
     params_js = ", ".join(f"'{k}': '{v}'" for k, v in params.items())
 
-    event_script = f"""
+    st.markdown(
+        f"""
         <script>
             if (typeof gtag !== 'undefined') {{
                 gtag('event', '{event_name}', {{{params_js}}});
             }}
         </script>
-    """
-    components.html(event_script, height=0, width=0)
+        """,
+        unsafe_allow_html=True,
+    )

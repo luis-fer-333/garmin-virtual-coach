@@ -28,9 +28,7 @@ from src.coach.prompt_builder import SYSTEM_PROMPT
 from src.coach.llm_client import LLMClient
 from src.analytics import inject_ga4, track_event
 
-logger = logging.getLogger(__name__)
-
-# --- Page config ---
+logger = logging.getLogger(__name__)# --- Page config ---
 st.set_page_config(
     page_title="Garmin Virtual Coach",
     page_icon="🏃",
