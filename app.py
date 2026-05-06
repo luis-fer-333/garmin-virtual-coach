@@ -456,6 +456,8 @@ def main():
 
         # Quick stats
         stats = data.get("daily_stats") or {}
+        if stats and not stats.get("totalSteps") and not stats.get("restingHeartRate"):
+            st.warning("⌚ Today's data not available yet. Sync your Garmin watch via the Garmin Connect app on your phone.")
         if stats:
             col1, col2 = st.columns(2)
             col1.metric("Resting HR", f"{stats.get('restingHeartRate', '—')} bpm")
