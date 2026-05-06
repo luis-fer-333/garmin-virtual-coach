@@ -330,6 +330,11 @@ def chart_sleep(data):
         "REM": (ds.get("remSleepSeconds", 0) or 0) / 3600,
         "Awake": (ds.get("awakeSleepSeconds", 0) or 0) / 3600,
     }
+
+    # Guard against all-zero values (no sleep data)
+    if sum(stages.values()) == 0:
+        return None
+
     colors = ["#1a237e", "#5c6bc0", "#7e57c2", "#ef5350"]
 
     fig, ax = plt.subplots(figsize=(5, 5))
