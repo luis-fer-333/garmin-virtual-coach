@@ -457,7 +457,7 @@ def main():
             col2.metric("Body Battery", f"{stats.get('bodyBatteryMostRecentValue', '—')}")
             col1, col2 = st.columns(2)
             col1.metric("Stress", f"{stats.get('averageStressLevel', '—')}")
-            col2.metric("Steps", f"{stats.get('totalSteps', 0):,}")
+            col2.metric("Steps", f"{stats.get('totalSteps') or 0:,}")
 
         hrv_summary = data.get("hrv", {}).get("hrvSummary", {}) if data.get("hrv") else {}
         if hrv_summary:
