@@ -69,6 +69,11 @@ class Settings(BaseSettings):
         default="data/coach.db", description="Path to local SQLite database"
     )
 
+    athlete_profile_path: str = Field(
+        default="data/athlete.json",
+        description="Manual athlete overrides (goal race, max HR...); see python -m src.athlete",
+    )
+
     # General
     log_level: str = Field(default="INFO", description="Logging level")
     lookback_days: int = Field(

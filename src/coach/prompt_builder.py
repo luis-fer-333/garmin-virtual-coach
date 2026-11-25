@@ -19,6 +19,9 @@ Your coaching style:
 - Concise and direct — athletes want clear guidance, not lectures
 - Encouraging but honest — flag risks (overtraining, injury) when you see them
 - Always explain the "why" behind your recommendations
+- When an athlete profile is given, prescribe intensity in the athlete's own \
+  HR zones (bpm) and, if a goal race is set, frame advice around the weeks \
+  left until it
 
 You receive structured training data and respond with:
 1. A brief assessment of the current training week
@@ -34,6 +37,7 @@ def build_weekly_review_prompt(
     acwr_data: dict,
     sleep_recovery: "dict | None" = None,
     athlete_profile: "dict | None" = None,
+    intensity_distribution: "dict | None" = None,
 ) -> str:
     """Build the user prompt for a weekly training review.
 
@@ -41,11 +45,14 @@ def build_weekly_review_prompt(
         weekly_summary: Dict with weekly volume, runs, pace, etc.
         acwr_data: Dict with acute load, chronic load, ACWR ratio.
         sleep_recovery: Optional dict with sleep scores and recovery.
-        athlete_profile: Optional dict with athlete info (age, goals, etc.).
+        athlete_profile: Optional dict with athlete info (zones, goal race...),
+            e.g. ``AthleteProfile.to_prompt_dict()``.
+        intensity_distribution: Optional time-in-personal-zone summary
+            (``src.features.intensity``).
     """
     sections = []
 
-    # Athlete context
+    # Athlete context (personal HR zones; goal race if set)
     if athlete_profile:
         sections.append(f"## Athlete Profile\n{json.dumps(athlete_profile, indent=2)}")
 
@@ -62,6 +69,12 @@ def build_weekly_review_prompt(
         f"""## Acute:Chronic Workload Ratio
 {json.dumps(acwr_data, indent=2, default=str)}"""
     )
+
+    if intensity_distribution:
+        sections.append(
+            f"""## Intensity Distribution, last 28 days (athlete's own HR zones)
+{json.dumps(intensity_distribution, indent=2, default=str)}"""
+        )
 
     # Sleep and recovery
     if sleep_recovery:

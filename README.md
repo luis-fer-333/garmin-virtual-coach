@@ -94,6 +94,36 @@ Column mapping lives in `src/ingestion/normalize.py`. If a column comes out empt
 
 The daily run re-fetches the last 3 days because sleep, HRV and VO2max for a day are often finalized the next morning.
 
+## Athlete profile and personal zones
+
+TRIMP, ACWR, time-in-zone and the recovery score use *your* numbers instead of generic 190/60 bpm. They are derived from the synced data, and you can override any of them.
+
+```bash
+python -m src.athlete show                         # values, zones, and where each came from
+python -m src.athlete set goal_race_date 2027-04-11
+python -m src.athlete set goal_race_distance marathon   # or half, 10k, 5k, or km
+python -m src.athlete set goal_target_time 3:15:00
+python -m src.athlete set max_hr 188               # override a derived value
+python -m src.athlete unset max_hr                 # back to derived
+python -m src.athlete keys                         # every settable key
+```
+
+Overrides live in `data/athlete.json` (`ATHLETE_PROFILE_PATH`). The FastAPI app exposes the same profile at `GET /athlete/profile`.
+
+| Value | Derived from (first available wins) |
+|---|---|
+| Max HR | override, then the higher of Garmin's zone setting and your highest *confirmed* activity max HR in the last 3 years (a lone spike is ignored), then 208 − 0.7 × age, then 190 |
+| Resting HR | override, then the median of your last 30 days, then Garmin's zone setting, then 60. Older activities use the 30-day median from their own date |
+| LTHR | override, then Garmin's latest lactate threshold, then Garmin's zone setting |
+| HR zones | `hr_zone_floors` override, else `zone_method`: `lthr` (Friel % of LTHR, default when an LTHR is known), `hrr` (Karvonen % of HR reserve, default otherwise), `max`, or `garmin` (your watch zones) |
+| HRV baseline | median of last-night HRV over 30 days |
+
+Load and intensity changes that come with it:
+
+- Activities without HR now add 0 TRIMP (they were scored as 140 bpm) and are counted in `n_no_hr`.
+- ACWR fills rest days with zero load and runs up to today; before, it only saw training days.
+- The weekly review computes chronic load from 120 days of history and adds a 28-day intensity distribution in your zones (from lap HR where laps are stored).
+
 ## Project Structure
 
 ```
@@ -110,8 +140,12 @@ garmin-virtual-coach/
 │   │   ├── garmin_client.py     # Garmin Connect API wrapper
 │   │   ├── fit_parser.py        # .fit file parser (offline fallback)
 │   │   └── pull_activities.py   # CLI entry point for data pull
+│   ├── athlete/
+│   │   ├── profile.py           # Personal max/resting HR, LTHR, zones, goal race
+│   │   └── __main__.py          # CLI: python -m src.athlete show|set|unset
 │   ├── features/
 │   │   ├── __init__.py
+│   │   ├── intensity.py         # Time in personal zones (80/20 view)
 │   │   ├── training_load.py     # TRIMP, acute/chronic workload ratio
 │   │   ├── pace_zones.py        # Zone classification and time-in-zone
 │   │   ├── trends.py            # Weekly/monthly volume and progression

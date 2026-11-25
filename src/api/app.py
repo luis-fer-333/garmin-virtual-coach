@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from config.settings import settings
 from src.ingestion.garmin_client import GarminClient
+from src.athlete import load_profile
 from src.features.training_load import compute_daily_load, compute_acwr
 from src.features.trends import weekly_summary
 from src.features.sleep_recovery import extract_sleep_score, compute_recovery_score
@@ -54,8 +55,9 @@ def weekly_review():
         if activities.empty:
             raise HTTPException(404, "No running activities found")
 
-        daily_load = compute_daily_load(activities)
-        acwr_df = compute_acwr(daily_load)
+        profile = load_profile(store, today=end)
+        daily_load = compute_daily_load(activities, profile=profile)
+        acwr_df = compute_acwr(daily_load, end=end)
         weekly = weekly_summary(activities)
 
         latest_acwr = acwr_df.iloc[-1].to_dict() if not acwr_df.empty else {}
@@ -71,6 +73,8 @@ def weekly_review():
             recovery = compute_recovery_score(
                 sleep_score=sleep_metrics.get("sleep_score"),
                 hrv_status=hrv_value,
+                resting_hr_baseline=profile.resting_hr,
+                hrv_baseline=profile.hrv_baseline_ms,
             )
             sleep_recovery = {**sleep_metrics, **recovery}
         except Exception as e:
@@ -81,6 +85,7 @@ def weekly_review():
             weekly_summary=latest_week,
             acwr_data=latest_acwr,
             sleep_recovery=sleep_recovery,
+            athlete_profile=profile.to_prompt_dict(),
         )
         llm = LLMClient()
         review_text = llm.generate(SYSTEM_PROMPT, user_prompt)
@@ -103,6 +108,12 @@ def weekly_review():
     except Exception as e:
         logger.exception("Error generating weekly review")
         raise HTTPException(500, f"Internal error: {e}")
+
+
+@app.get("/athlete/profile")
+def athlete_profile():
+    """Personal HR values, zones and goal race, with where each value came from."""
+    return load_profile(store).to_dict()
 
 
 @app.get("/coach/history")

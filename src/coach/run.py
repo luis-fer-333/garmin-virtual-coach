@@ -9,6 +9,8 @@ from config.settings import settings
 from src.ingestion.garmin_client import GarminClient
 from src.ingestion.sync import GarminSync
 from src.storage.local_store import LocalStore
+from src.athlete import load_profile
+from src.features.intensity import intensity_from_store
 from src.features.training_load import compute_daily_load, compute_acwr
 from src.features.trends import weekly_summary
 from src.features.sleep_recovery import extract_sleep_score, compute_recovery_score
@@ -33,21 +35,40 @@ def main() -> None:
 
     end = date.today()
     start = end - timedelta(days=settings.lookback_days)
+    # Chronic load needs a few months of history to settle (EWMA span 28d)
+    load_start = end - timedelta(days=max(settings.lookback_days, 120))
+
+    profile = load_profile(store, today=end)
+    logger.info(
+        "Athlete profile: max HR %s (%s), resting HR %s (%s), zones by %s",
+        profile.max_hr, profile.sources.get("max_hr"),
+        profile.resting_hr, profile.sources.get("resting_hr"), profile.zone_method,
+    )
+    for note in profile.notes:
+        logger.info("Profile note: %s", note)
 
     run_sports = [
         r[0] for r in store.conn.execute("SELECT DISTINCT sport FROM activities")
         if r[0] and "run" in r[0]
     ]
-    activities = store.activities_df(sport=run_sports, since=start.isoformat()) if run_sports else None
-    if activities is None or activities.empty:
+    history = store.activities_df(sport=run_sports, since=load_start.isoformat()) if run_sports else None
+    if history is None or history.empty:
+        logger.warning("No running activities found in the last %d days", (end - load_start).days)
+        print("No running activities found. Go for a run first! 🏃")
+        return
+    recent = history[history["startTimeLocal"].str[:10] >= start.isoformat()]
+    if recent.empty:
         logger.warning("No running activities found in the last %d days", settings.lookback_days)
         print("No running activities found. Go for a run first! 🏃")
         return
 
-    # 2. Compute features
-    daily_load = compute_daily_load(activities)
-    acwr_df = compute_acwr(daily_load)
-    weekly = weekly_summary(activities)
+    # 2. Compute features with personal HR values
+    daily_load = compute_daily_load(history, profile=profile)
+    acwr_df = compute_acwr(daily_load, end=end)
+    weekly = weekly_summary(recent)
+    intensity = intensity_from_store(
+        store, profile, recent[recent["startTimeLocal"].str[:10] >= (end - timedelta(days=28)).isoformat()]
+    )
 
     # Latest ACWR values
     latest_acwr = acwr_df.iloc[-1].to_dict() if not acwr_df.empty else {}
@@ -63,9 +84,15 @@ def main() -> None:
             sleep_metrics = extract_sleep_score(sleep_data)
             hrv_data = store.get_raw("hrv", day.isoformat()) or {}
             hrv_value = (hrv_data.get("hrvSummary") or {}).get("lastNightAvg")
+            rhr_row = store.conn.execute(
+                "SELECT resting_hr FROM daily_wellness WHERE date=?", (day.isoformat(),)
+            ).fetchone()
             recovery = compute_recovery_score(
                 sleep_score=sleep_metrics.get("sleep_score"),
                 hrv_status=hrv_value,
+                resting_hr=rhr_row[0] if rhr_row else None,
+                resting_hr_baseline=profile.resting_hr,
+                hrv_baseline=profile.hrv_baseline_ms,
             )
             sleep_recovery = {**sleep_metrics, **recovery}
             break
@@ -75,6 +102,8 @@ def main() -> None:
         weekly_summary=latest_week,
         acwr_data=latest_acwr,
         sleep_recovery=sleep_recovery,
+        athlete_profile=profile.to_prompt_dict(),
+        intensity_distribution=intensity,
     )
 
     logger.info("Prompt built (%d chars), calling LLM...", len(user_prompt))

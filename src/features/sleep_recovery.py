@@ -33,10 +33,14 @@ def compute_recovery_score(
     hrv_status: "float | None",
     resting_hr: "float | None" = None,
     resting_hr_baseline: float = 55,
+    hrv_baseline: "float | None" = None,
 ) -> dict:
     """Compute a simple composite recovery score (0-100).
 
     Combines sleep quality and HRV status. Higher = better recovered.
+    Pass your own baselines from the athlete profile
+    (``profile.resting_hr``, ``profile.hrv_baseline_ms``); without them the
+    generic 55 bpm / 60 ms references apply.
     This is a simplified model; Garmin's own Body Battery is more
     sophisticated but not always available via API.
     """
@@ -48,8 +52,13 @@ def compute_recovery_score(
         weights["sleep"] = 0.5
 
     if hrv_status is not None:
-        # Normalize HRV: assume baseline ~50ms, good >60ms
-        hrv_score = min((hrv_status / 60) * 100, 100)
+        if hrv_baseline:
+            # At your own baseline -> 90; each 1% above/below moves ~1 point.
+            # GUESS: scaling is a first cut, not validated.
+            hrv_score = max(0.0, min(hrv_status / hrv_baseline * 90, 100))
+        else:
+            # Generic: assume good >60ms
+            hrv_score = min((hrv_status / 60) * 100, 100)
         components["hrv"] = hrv_score
         weights["hrv"] = 0.35
 
