@@ -7,6 +7,8 @@ from pathlib import Path
 
 from config.settings import settings
 from src.ingestion.garmin_client import GarminClient
+from src.ingestion.sync import GarminSync
+from src.storage.local_store import LocalStore
 from src.features.training_load import compute_daily_load, compute_acwr
 from src.features.trends import weekly_summary
 from src.features.sleep_recovery import extract_sleep_score, compute_recovery_score
@@ -21,15 +23,23 @@ def main() -> None:
     """Run the weekly coaching review pipeline."""
     logger.info("Starting weekly coaching review...")
 
-    # 1. Fetch data
+    # 1. Sync new Garmin data into the local store, then read from it
     client = GarminClient()
     client.connect()
+    store = LocalStore()
+    stats = GarminSync(client.api, store).daily(details=False)
+    if stats.stopped_reason:
+        logger.warning("Sync stopped early: %s (using stored data)", stats.stopped_reason)
 
     end = date.today()
     start = end - timedelta(days=settings.lookback_days)
 
-    activities = client.get_activities(start, end)
-    if activities.empty:
+    run_sports = [
+        r[0] for r in store.conn.execute("SELECT DISTINCT sport FROM activities")
+        if r[0] and "run" in r[0]
+    ]
+    activities = store.activities_df(sport=run_sports, since=start.isoformat()) if run_sports else None
+    if activities is None or activities.empty:
         logger.warning("No running activities found in the last %d days", settings.lookback_days)
         print("No running activities found. Go for a run first! 🏃")
         return
@@ -45,20 +55,20 @@ def main() -> None:
     # Latest week summary
     latest_week = weekly.iloc[-1].to_dict() if not weekly.empty else {}
 
-    # Sleep/recovery (best effort — may not be available)
+    # Sleep/recovery from stored payloads (last night may not be in yet)
     sleep_recovery = None
-    try:
-        sleep_data = client.get_sleep_data(end)
-        sleep_metrics = extract_sleep_score(sleep_data)
-        hrv_data = client.get_hrv_data(end)
-        hrv_value = hrv_data.get("hrvSummary", {}).get("lastNightAvg")
-        recovery = compute_recovery_score(
-            sleep_score=sleep_metrics.get("sleep_score"),
-            hrv_status=hrv_value,
-        )
-        sleep_recovery = {**sleep_metrics, **recovery}
-    except Exception as e:
-        logger.warning("Could not fetch sleep/recovery data: %s", e)
+    for day in (end, end - timedelta(days=1)):
+        sleep_data = store.get_raw("sleep", day.isoformat())
+        if sleep_data:
+            sleep_metrics = extract_sleep_score(sleep_data)
+            hrv_data = store.get_raw("hrv", day.isoformat()) or {}
+            hrv_value = (hrv_data.get("hrvSummary") or {}).get("lastNightAvg")
+            recovery = compute_recovery_score(
+                sleep_score=sleep_metrics.get("sleep_score"),
+                hrv_status=hrv_value,
+            )
+            sleep_recovery = {**sleep_metrics, **recovery}
+            break
 
     # 3. Build prompt
     user_prompt = build_weekly_review_prompt(

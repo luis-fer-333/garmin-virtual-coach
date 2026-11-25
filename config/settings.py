@@ -35,6 +35,10 @@ class Settings(BaseSettings):
         default="~/.garminconnect",
         description="Directory to store Garmin auth tokens",
     )
+    garmin_request_interval: float = Field(
+        default=1.5,
+        description="Seconds between Garmin API calls during sync (rate-limit safety)",
+    )
 
     # LLM
     llm_provider: str = Field(

@@ -27,16 +27,22 @@ class GarminClient:
         self._api: Garmin | None = None
 
     def connect(self) -> None:
-        """Authenticate to Garmin Connect, reusing saved tokens when possible."""
-        self._api = Garmin(settings.garmin_email, settings.garmin_password)
-        try:
-            self._api.login(str(self.token_dir))
-            logger.info("Logged in to Garmin Connect (cached tokens)")
-        except Exception:
-            logger.info("Token login failed, doing full auth...")
-            self._api.login()
-            self._api.garth.dump(str(self.token_dir))
-            logger.info("Full auth succeeded, tokens saved")
+        """Authenticate to Garmin Connect, reusing saved tokens when possible.
+
+        garminconnect>=0.3 loads tokens from ``token_dir`` and falls back to
+        email/password (prompting for MFA if needed), then saves fresh tokens
+        there itself. Older versions exposed ``.garth`` for saving instead.
+        """
+        self._api = Garmin(
+            settings.garmin_email or None,
+            settings.garmin_password or None,
+            prompt_mfa=lambda: input("Garmin MFA code: "),
+        )
+        self._api.login(str(self.token_dir))
+        garth = getattr(self._api, "garth", None)
+        if garth is not None:  # garminconnect < 0.3
+            garth.dump(str(self.token_dir))
+        logger.info("Logged in to Garmin Connect")
 
     @property
     def api(self) -> Garmin:

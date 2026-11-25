@@ -44,12 +44,55 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your Garmin Connect credentials and LLM API key
 
-# 4. Pull your data
-python -m src.ingestion.pull_activities
+# 4. Pull your full history into SQLite (resumable; see "Syncing Garmin data")
+python -m src.ingestion.sync backfill
 
 # 5. Run the coach
 python -m src.coach.run
 ```
+
+## Syncing Garmin data
+
+All Garmin data lands in one SQLite file (`LOCAL_DB_PATH`, default `data/coach.db`).
+
+```bash
+python -m src.ingestion.sync backfill                # everything since your first activity
+python -m src.ingestion.sync backfill --max-days 365 # cap a single run (resume later)
+python -m src.ingestion.sync backfill --since 2019-01-01
+python -m src.ingestion.sync daily                   # incremental: new activities + last 14 days
+python -m src.ingestion.sync status                  # counts and date ranges
+python -m src.ingestion.sync rebuild                 # re-derive tables from raw payloads, no Garmin calls
+```
+
+**What is fetched**
+
+| Dataset | Endpoint | Cost |
+|---|---|---|
+| Activities, every sport | activity list, 100 per page | ~1 call / 100 activities |
+| Laps + time in HR zones | per activity | 2 calls / activity (`--no-details` to skip) |
+| Daily summary (RHR, steps, stress, Body Battery, intensity min, SpO2) | per day | 1 call / day |
+| Sleep, HRV, VO2max/fitness age, training readiness | per day | 4 calls / day |
+| Weight / body fat | per year | 1 call / year |
+| Profile, user settings, HR zones, lactate threshold | snapshot per sync day | 4 calls |
+
+**Tables**
+
+- `raw_responses` — every payload exactly as Garmin returned it, keyed by `(dataset, key)`, with a status (`ok` / `empty` / `error`). It is also the sync ledger: a day counts as done once each dataset is `ok` or `empty`. Keys that fail 3 times are skipped.
+- `activities` — one typed row per activity (sport, duration, distance, HR, pace, power, cadence, training effect/load, time in Garmin HR zones…).
+- `daily_wellness` — one typed row per day (resting HR, HRV + baseline, sleep stages + score, Body Battery, stress, VO2max, readiness, weight…).
+- `coaching_reviews` — saved LLM reviews.
+
+Column mapping lives in `src/ingestion/normalize.py`. If a column comes out empty for your watch, fix the field name there and run `rebuild`.
+
+**Rate limits.** Requests are spaced by `GARMIN_REQUEST_INTERVAL` (default 1.5 s). On HTTP 429 the sync backs off (1, 5, 15 min) and then stops cleanly. Progress is committed per day, so just re-run. Roughly: 1 year of history is about 1,825 wellness calls, so around 50 minutes.
+
+**Running it daily** (example cron line, 06:30 every day):
+
+```cron
+30 6 * * * cd /path/to/garmin-virtual-coach && .venv/bin/python -m src.ingestion.sync daily >> data/sync.log 2>&1
+```
+
+The daily run re-fetches the last 3 days because sleep, HRV and VO2max for a day are often finalized the next morning.
 
 ## Project Structure
 
