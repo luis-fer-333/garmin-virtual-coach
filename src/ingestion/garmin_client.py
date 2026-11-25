@@ -6,12 +6,15 @@ for activities, daily summaries, sleep, and HRV.
 
 from __future__ import annotations
 
+import getpass
 import logging
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
 from garminconnect import Garmin
+from garminconnect.exceptions import GarminConnectAuthenticationError
 
 from config.settings import settings
 
@@ -29,20 +32,41 @@ class GarminClient:
     def connect(self) -> None:
         """Authenticate to Garmin Connect, reusing saved tokens when possible.
 
-        garminconnect>=0.3 loads tokens from ``token_dir`` and falls back to
-        email/password (prompting for MFA if needed), then saves fresh tokens
-        there itself. Older versions exposed ``.garth`` for saving instead.
+        Order: cached tokens in ``token_dir`` -> GARMIN_EMAIL/GARMIN_PASSWORD
+        (env or .env) -> interactive prompt (password hidden via getpass).
+        garminconnect>=0.3 saves fresh tokens to ``token_dir`` after a
+        credential login, so later runs (e.g. a scheduled daily sync) need
+        no password.
         """
+        email = settings.garmin_email or None
+        password = settings.garmin_password or None
+        try:
+            self._login(email, password)
+        except GarminConnectAuthenticationError as e:
+            if email and password:
+                raise
+            if not sys.stdin or not sys.stdin.isatty():
+                raise GarminConnectAuthenticationError(
+                    f"No saved Garmin tokens in {self.token_dir} and no "
+                    "GARMIN_EMAIL/GARMIN_PASSWORD set. Run the sync once "
+                    "interactively to log in and save tokens."
+                ) from e
+            print(f"No saved Garmin tokens in {self.token_dir}; logging in once.")
+            email = email or input("Garmin email: ").strip()
+            password = password or getpass.getpass("Garmin password: ")
+            self._login(email, password)
+        logger.info("Logged in to Garmin Connect (tokens in %s)", self.token_dir)
+
+    def _login(self, email: str | None, password: str | None) -> None:
         self._api = Garmin(
-            settings.garmin_email or None,
-            settings.garmin_password or None,
-            prompt_mfa=lambda: input("Garmin MFA code: "),
+            email,
+            password,
+            prompt_mfa=lambda: input("Garmin MFA code: ").strip(),
         )
         self._api.login(str(self.token_dir))
         garth = getattr(self._api, "garth", None)
         if garth is not None:  # garminconnect < 0.3
             garth.dump(str(self.token_dir))
-        logger.info("Logged in to Garmin Connect")
 
     @property
     def api(self) -> Garmin:
